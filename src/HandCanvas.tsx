@@ -25,11 +25,12 @@ const HandCanvas: React.FC = () => {
   const pathRef = useRef<Point[]>([]);
   const drawing = useRef<boolean>(false);
   const [showClear, setShowClear] = useState(false);
+  const [gesture, setGesture] = useState<'drawing' | 'closed' | 'one_finger'>('drawing');
+  const [infoMessage, setInfoMessage] = useState<string>('Show your hand to start drawing!');
+  const lastGesture = useRef<'drawing' | 'closed' | 'one_finger'>('drawing');
 
-  // Clear only the drawing path
   const handleClear = () => {
     pathRef.current = [];
-    // Do not clear the whole canvas here; just reset the path
   };
 
   useEffect(() => {
@@ -54,7 +55,6 @@ const HandCanvas: React.FC = () => {
 
       hands.onResults((results: HandsResults) => {
         try {
-          // Draw the video frame as the background
           canvasCtx.save();
           canvasCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
           if (videoElement.readyState === 4) {
@@ -65,45 +65,73 @@ const HandCanvas: React.FC = () => {
           if (!(results.multiHandLandmarks && results.multiHandLandmarks.length > 0)) {
             drawing.current = false;
             setShowClear(false);
+            setGesture('drawing');
+            setInfoMessage('Show one finger to write OK and draw!');
             drawClearButton(canvasCtx);
-            // Draw the path if any (should be empty if just cleared)
             drawPath(canvasCtx, pathRef.current);
+            drawInfo(canvasCtx, infoMessage);
             return;
           }
           const landmarks: NormalizedLandmarkList = results.multiHandLandmarks[0];
-          // Draw hand landmarks
           drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 2 });
           drawLandmarks(canvasCtx, landmarks, { color: '#FF0000', lineWidth: 1 });
-          // Index finger tip is landmark 8
           const tip = landmarks[8];
           const x = tip.x * CANVAS_WIDTH;
           const y = tip.y * CANVAS_HEIGHT;
 
-          // Check if finger tip is inside the clear button area
-          if (isFingerInButton(x, y)) {
-            setShowClear(true);
-            handleClear();
+          // --- Gesture detection ---
+          const isClosed = isHandClosed(landmarks);
+          const isOneFinger = isOnlyOneFingerUp(landmarks);
+
+          // Set gesture state and info message
+          if (isClosed) {
+            setGesture('closed');
+            setInfoMessage('Hand closed: Drawing paused. Show one finger to draw OK.');
+            drawing.current = false;
+          } else if (isOneFinger) {
+            setGesture('one_finger');
+            setInfoMessage('One finger up: "OK" detected. You can draw now!');
+            // Drawing is allowed only in this state
           } else {
-            setShowClear(false);
+            setGesture('drawing');
+            setInfoMessage('Show one finger to write OK and draw!');
+            drawing.current = false;
           }
 
-          // Start drawing if not already
-          if (!drawing.current) {
-            pathRef.current = [{ x, y }];
-            drawing.current = true;
+          // --- Drawing logic ---
+          // Only allow drawing if one finger is up (OK gesture)
+          if (isOneFinger) {
+            if (!drawing.current) {
+              pathRef.current = [{ x, y }];
+              drawing.current = true;
+            } else {
+              pathRef.current.push({ x, y });
+            }
           } else {
-            pathRef.current.push({ x, y });
+            drawing.current = false;
           }
 
           // Draw the path
           drawPath(canvasCtx, pathRef.current);
-          // Draw the current point (pen tip)
+
+          // Draw finger tip
           canvasCtx.beginPath();
-          canvasCtx.arc(x, y, 8, 0, 2 * Math.PI);
-          canvasCtx.fillStyle = '#2196f3';
+          canvasCtx.arc(x, y, 10, 0, 2 * Math.PI);
+          canvasCtx.fillStyle = isOneFinger ? '#43a047' : gesture === 'closed' ? '#888' : '#2196f3';
+          canvasCtx.globalAlpha = gesture === 'closed' ? 0.5 : 1;
+          canvasCtx.shadowColor = isOneFinger ? '#fff' : 'transparent';
+          canvasCtx.shadowBlur = isOneFinger ? 16 : 0;
           canvasCtx.fill();
-          // Draw the clear button
+          canvasCtx.globalAlpha = 1;
+          canvasCtx.shadowBlur = 0;
+
+          // Draw OK message if one finger up
+          if (isOneFinger) {
+            drawOK(canvasCtx, x, y);
+          }
+
           drawClearButton(canvasCtx, showClear);
+          drawInfo(canvasCtx, infoMessage);
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error('Error in onResults:', err);
@@ -116,7 +144,6 @@ const HandCanvas: React.FC = () => {
             try {
               await hands!.send({ image: videoElement });
             } catch (err) {
-              // eslint-disable-next-line no-console
               console.error('Error in camera onFrame:', err);
             }
           },
@@ -126,7 +153,6 @@ const HandCanvas: React.FC = () => {
         camera.start();
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.error('Error initializing hand tracking:', err);
     }
 
@@ -136,7 +162,6 @@ const HandCanvas: React.FC = () => {
         if (camera) camera.stop();
         if (hands && (hands as any).close) (hands as any).close();
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error('Error during cleanup:', err);
       }
     };
@@ -176,6 +201,51 @@ const HandCanvas: React.FC = () => {
     }
   }
 
+  // --- Gesture helpers ---
+  function isHandClosed(landmarks: NormalizedLandmarkList): boolean {
+    // If all fingertips are below their respective PIP joints (folded)
+    // Index: 8 < 6, Middle: 12 < 10, Ring: 16 < 14, Pinky: 20 < 18 (y axis)
+    // For y, higher value is lower on image
+    return [8, 12, 16, 20].every(
+      (tip, i) => landmarks[tip].y > landmarks[tip - 2].y + 0.03 // add margin
+    );
+  }
+
+  function isOnlyOneFingerUp(landmarks: NormalizedLandmarkList): boolean {
+    // Index finger up, others down
+    const indexUp = landmarks[8].y < landmarks[6].y - 0.03;
+    const othersDown = [12, 16, 20].every(
+      (tip) => landmarks[tip].y > landmarks[tip - 2].y + 0.03
+    );
+    return indexUp && othersDown;
+  }
+
+  function drawOK(ctx: CanvasRenderingContext2D, x: number, y: number) {
+    ctx.save();
+    ctx.font = 'bold 48px Segoe UI, Arial';
+    ctx.fillStyle = '#43a047';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 4;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeText('OK', x, y - 40);
+    ctx.fillText('OK', x, y - 40);
+    ctx.restore();
+  }
+
+  // Draw info message at the top
+  function drawInfo(ctx: CanvasRenderingContext2D, message: string) {
+    ctx.save();
+    ctx.font = 'bold 22px Segoe UI, Arial';
+    ctx.fillStyle = 'rgba(33, 150, 243, 0.92)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.shadowColor = '#fff';
+    ctx.shadowBlur = 8;
+    ctx.fillText(message, CANVAS_WIDTH / 2, 18);
+    ctx.restore();
+  }
+
   // Mouse click handler for clear button
   function handleCanvasClick(e: React.MouseEvent<HTMLCanvasElement, MouseEvent>) {
     try {
@@ -191,8 +261,9 @@ const HandCanvas: React.FC = () => {
     }
   }
 
+  // Update canvas container style for even more attractive UI
   return (
-    <div style={{ position: 'relative', width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}>
+    <div style={{ position: 'relative', width: CANVAS_WIDTH, height: CANVAS_HEIGHT, boxShadow: '0 12px 36px 0 rgba(31,38,135,0.25)', borderRadius: 32, background: 'linear-gradient(120deg, #f6d365 0%, #fda085 100%)', backdropFilter: 'blur(8px)', border: '2.5px solid #1976d2', margin: '40px auto', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s' }}>
       <video
         ref={videoRef}
         style={{ position: 'absolute', left: 0, top: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT, zIndex: 0, opacity: 0 }}
@@ -206,7 +277,7 @@ const HandCanvas: React.FC = () => {
         ref={canvasRef}
         width={CANVAS_WIDTH}
         height={CANVAS_HEIGHT}
-        style={{ position: 'absolute', left: 0, top: 0, border: '2px solid #333', borderRadius: 8, zIndex: 1 }}
+        style={{ position: 'absolute', left: 0, top: 0, border: '3px solid #fff', borderRadius: 24, zIndex: 1, boxShadow: '0 8px 32px rgba(33,150,243,0.18)', background: 'rgba(255,255,255,0.85)' }}
         onClick={handleCanvasClick}
       />
     </div>
