@@ -55,13 +55,14 @@ const HandCanvas: React.FC = () => {
 
       hands.onResults((results: HandsResults) => {
         try {
+          // Mirror only the video, hand, and drawing, not the text
           canvasCtx.save();
+          canvasCtx.setTransform(-1, 0, 0, 1, CANVAS_WIDTH, 0);
           canvasCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
           if (videoElement.readyState === 4) {
             canvasCtx.drawImage(videoElement, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
           }
-          canvasCtx.restore();
-
+          // Draw hand and path in mirrored space
           if (!(results.multiHandLandmarks && results.multiHandLandmarks.length > 0)) {
             drawing.current = false;
             setShowClear(false);
@@ -69,6 +70,8 @@ const HandCanvas: React.FC = () => {
             setInfoMessage('Show one finger to write OK and draw!');
             drawClearButton(canvasCtx);
             drawPath(canvasCtx, pathRef.current);
+            canvasCtx.restore();
+            // Draw info text in normal orientation
             drawInfo(canvasCtx, infoMessage);
             return;
           }
@@ -125,12 +128,12 @@ const HandCanvas: React.FC = () => {
           canvasCtx.globalAlpha = 1;
           canvasCtx.shadowBlur = 0;
 
-          // Draw OK message if one finger up
+          // Draw OK message if one finger up (not mirrored)
+          canvasCtx.restore();
           if (isOneFinger) {
             drawOK(canvasCtx, x, y);
           }
-
-          drawClearButton(canvasCtx, showClear);
+          // Draw info text in normal orientation
           drawInfo(canvasCtx, infoMessage);
         } catch (err) {
           // eslint-disable-next-line no-console
@@ -222,27 +225,32 @@ const HandCanvas: React.FC = () => {
 
   function drawOK(ctx: CanvasRenderingContext2D, x: number, y: number) {
     ctx.save();
-    ctx.font = 'bold 48px Segoe UI, Arial';
-    ctx.fillStyle = '#43a047';
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 4;
+    ctx.font = 'bold 54px "Fira Sans", "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = '#ffb347';
+    ctx.strokeStyle = '#232526';
+    ctx.lineWidth = 6;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.strokeText('OK', x, y - 40);
-    ctx.fillText('OK', x, y - 40);
+    ctx.shadowColor = '#fff';
+    ctx.shadowBlur = 12;
+    ctx.strokeText('OK', CANVAS_WIDTH - x, y - 50); // flip x for mirror
+    ctx.fillText('OK', CANVAS_WIDTH - x, y - 50);
     ctx.restore();
   }
 
-  // Draw info message at the top
   function drawInfo(ctx: CanvasRenderingContext2D, message: string) {
     ctx.save();
-    ctx.font = 'bold 22px Segoe UI, Arial';
-    ctx.fillStyle = 'rgba(33, 150, 243, 0.92)';
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // Ensure normal orientation
+    ctx.font = '600 26px "Fira Sans", "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#232526';
+    ctx.lineWidth = 5;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.shadowColor = '#fff';
-    ctx.shadowBlur = 8;
-    ctx.fillText(message, CANVAS_WIDTH / 2, 18);
+    ctx.shadowColor = '#ffb347';
+    ctx.shadowBlur = 10;
+    ctx.strokeText(message, CANVAS_WIDTH / 2, 24);
+    ctx.fillText(message, CANVAS_WIDTH / 2, 24);
     ctx.restore();
   }
 
@@ -261,12 +269,36 @@ const HandCanvas: React.FC = () => {
     }
   }
 
-  // Update canvas container style for even more attractive UI
+  // Redesign canvas container for a unique, visually distinct look
   return (
-    <div style={{ position: 'relative', width: CANVAS_WIDTH, height: CANVAS_HEIGHT, boxShadow: '0 12px 36px 0 rgba(31,38,135,0.25)', borderRadius: 32, background: 'linear-gradient(120deg, #f6d365 0%, #fda085 100%)', backdropFilter: 'blur(8px)', border: '2.5px solid #1976d2', margin: '40px auto', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s' }}>
+    <div style={{
+      position: 'relative',
+      width: CANVAS_WIDTH,
+      height: CANVAS_HEIGHT,
+      background: 'repeating-linear-gradient(135deg, #232526 0px, #232526 40px, #414345 40px, #414345 80px)',
+      border: '6px double #ffb347',
+      borderRadius: '0 60px 0 60px',
+      margin: '56px auto',
+      boxShadow: '0 20px 60px 0 rgba(0,0,0,0.35)',
+      overflow: 'hidden',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      boxSizing: 'border-box',
+      transition: 'all 0.4s',
+    }}>
       <video
         ref={videoRef}
-        style={{ position: 'absolute', left: 0, top: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT, zIndex: 0, opacity: 0 }}
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          width: CANVAS_WIDTH,
+          height: CANVAS_HEIGHT,
+          zIndex: 0,
+          opacity: 0,
+          transform: 'scaleX(-1)',
+        }}
         width={CANVAS_WIDTH}
         height={CANVAS_HEIGHT}
         playsInline
@@ -277,7 +309,17 @@ const HandCanvas: React.FC = () => {
         ref={canvasRef}
         width={CANVAS_WIDTH}
         height={CANVAS_HEIGHT}
-        style={{ position: 'absolute', left: 0, top: 0, border: '3px solid #fff', borderRadius: 24, zIndex: 1, boxShadow: '0 8px 32px rgba(33,150,243,0.18)', background: 'rgba(255,255,255,0.85)' }}
+        style={{
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          border: 'none',
+          borderRadius: '0 48px 0 48px',
+          zIndex: 1,
+          background: 'rgba(255,255,255,0.93)',
+          boxShadow: '0 0 0 8px #ffb347 inset',
+          transition: 'all 0.4s',
+        }}
         onClick={handleCanvasClick}
       />
     </div>
